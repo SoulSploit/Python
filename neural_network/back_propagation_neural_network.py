@@ -1,203 +1,164 @@
-#!/usr/bin/python
-
-"""
-
-A Framework of Back Propagation Neural Network (BP) model
-
-Easy to use:
-    * add many layers as you want ! ! !
-    * clearly see how the loss decreasing
-Easy to expand:
-    * more activation functions
-    * more loss functions
-    * more optimization method
-
-Author: Stephen Lee
-Github : https://github.com/RiptideBo
-Date: 2017.11.23
-
-"""
-
 import numpy as np
 from matplotlib import pyplot as plt
 
 
 def sigmoid(x: np.ndarray) -> np.ndarray:
+    """Sigmoid activation function."""
     return 1 / (1 + np.exp(-x))
 
 
-class DenseLayer:
-    """
-    Layers of BP neural network
-    """
+def sigmoid_derivative(x: np.ndarray) -> np.ndarray:
+    """Derivative of the sigmoid function."""
+    return x * (1 - x)
 
-    def __init__(
-        self, units, activation=None, learning_rate=None, is_input_layer=False
-    ):
-        """
-        common connected layer of bp network
-        :param units: numbers of neural units
-        :param activation: activation function
-        :param learning_rate: learning rate for paras
-        :param is_input_layer: whether it is input layer or not
-        """
+
+class DenseLayer:
+    """A dense layer for the BP neural network."""
+
+    def __init__(self, units: int, activation=sigmoid, learning_rate: float = 0.3, is_input_layer: bool = False):
         self.units = units
         self.weight = None
         self.bias = None
         self.activation = activation
-        if learning_rate is None:
-            learning_rate = 0.3
-        self.learn_rate = learning_rate
+        self.learning_rate = learning_rate
         self.is_input_layer = is_input_layer
+        self.output = None
+        self.xdata = None
 
-    def initializer(self, back_units):
+    def initializer(self, back_units: int):
+        """Initialize weights and biases."""
         rng = np.random.default_rng()
-        self.weight = np.asmatrix(rng.normal(0, 0.5, (self.units, back_units)))
-        self.bias = np.asmatrix(rng.normal(0, 0.5, self.units)).T
-        if self.activation is None:
-            self.activation = sigmoid
+        self.weight = rng.normal(0, 0.5, (self.units, back_units))
+        self.bias = rng.normal(0, 0.5, self.units).reshape(-1, 1)
 
-    def cal_gradient(self):
-        # activation function may be sigmoid or linear
-        if self.activation == sigmoid:
-            gradient_mat = np.dot(self.output, (1 - self.output).T)
-            gradient_activation = np.diag(np.diag(gradient_mat))
-        else:
-            gradient_activation = 1
-        return gradient_activation
-
-    def forward_propagation(self, xdata):
+    def forward_propagation(self, xdata: np.ndarray) -> np.ndarray:
+        """Perform forward propagation."""
         self.xdata = xdata
         if self.is_input_layer:
-            # input layer
-            self.wx_plus_b = xdata
             self.output = xdata
-            return xdata
         else:
-            self.wx_plus_b = np.dot(self.weight, self.xdata) - self.bias
-            self.output = self.activation(self.wx_plus_b)
-            return self.output
+            z = np.dot(self.weight, self.xdata) + self.bias
+            self.output = self.activation(z)
+        return self.output
 
-    def back_propagation(self, gradient):
-        gradient_activation = self.cal_gradient()  # i * i 维
-        gradient = np.asmatrix(np.dot(gradient.T, gradient_activation))
+    def back_propagation(self, gradient: np.ndarray) -> np.ndarray:
+        """Perform back propagation."""
+        gradient_activation = self.activation(self.output)
+        gradient = gradient * sigmoid_derivative(gradient_activation)
 
-        self._gradient_weight = np.asmatrix(self.xdata)
-        self._gradient_bias = -1
-        self._gradient_x = self.weight
+        gradient_weight = np.dot(gradient, self.xdata.T)
+        gradient_bias = gradient
 
-        self.gradient_weight = np.dot(gradient.T, self._gradient_weight.T)
-        self.gradient_bias = gradient * self._gradient_bias
-        self.gradient = np.dot(gradient, self._gradient_x).T
-        # upgrade: the Negative gradient direction
-        self.weight = self.weight - self.learn_rate * self.gradient_weight
-        self.bias = self.bias - self.learn_rate * self.gradient_bias.T
-        # updates the weights and bias according to learning rate (0.3 if undefined)
-        return self.gradient
+        self.weight -= self.learning_rate * gradient_weight
+        self.bias -= self.learning_rate * gradient_bias.mean(axis=1, keepdims=True)
+
+        return np.dot(self.weight.T, gradient)
+
+
+class LossFunction:
+    """Base class for loss functions."""
+
+    def calculate(self, y_true: np.ndarray, y_pred: np.ndarray) -> float:
+        """Calculate loss."""
+        raise NotImplementedError
+
+    def gradient(self, y_true: np.ndarray, y_pred: np.ndarray) -> np.ndarray:
+        """Calculate gradient of the loss."""
+        raise NotImplementedError
+
+
+class MeanSquaredError(LossFunction):
+    """Mean Squared Error loss function."""
+
+    def calculate(self, y_true: np.ndarray, y_pred: np.ndarray) -> float:
+        return np.mean(np.square(y_true - y_pred))
+
+    def gradient(self, y_true: np.ndarray, y_pred: np.ndarray) -> np.ndarray:
+        return 2 * (y_pred - y_true) / y_true.size
 
 
 class BPNN:
-    """
-    Back Propagation Neural Network model
-    """
+    """Back Propagation Neural Network model."""
 
     def __init__(self):
         self.layers = []
+        self.loss_function = MeanSquaredError()
         self.train_mse = []
-        self.fig_loss = plt.figure()
-        self.ax_loss = self.fig_loss.add_subplot(1, 1, 1)
+        self.fig_loss, self.ax_loss = plt.subplots()
 
-    def add_layer(self, layer):
+    def add_layer(self, layer: DenseLayer):
+        """Add a layer to the network."""
         self.layers.append(layer)
 
     def build(self):
-        for i, layer in enumerate(self.layers[:]):
-            if i < 1:
-                layer.is_input_layer = True
-            else:
+        """Initialize layers and weights."""
+        for i, layer in enumerate(self.layers):
+            if i > 0:
                 layer.initializer(self.layers[i - 1].units)
+            layer.is_input_layer = (i == 0)
 
     def summary(self):
-        for i, layer in enumerate(self.layers[:]):
-            print(f"------- layer {i} -------")
-            print("weight.shape ", np.shape(layer.weight))
-            print("bias.shape ", np.shape(layer.bias))
+        """Print a summary of the network architecture."""
+        for i, layer in enumerate(self.layers):
+            print(f"Layer {i}:")
+            print(f"  Weights shape: {layer.weight.shape}")
+            print(f"  Bias shape: {layer.bias.shape}")
 
-    def train(self, xdata, ydata, train_round, accuracy):
-        self.train_round = train_round
-        self.accuracy = accuracy
-
-        self.ax_loss.hlines(self.accuracy, 0, self.train_round * 1.1)
-
-        x_shape = np.shape(xdata)
+    def train(self, xdata: np.ndarray, ydata: np.ndarray, train_round: int, accuracy: float):
+        """Train the network."""
         for _ in range(train_round):
-            all_loss = 0
-            for row in range(x_shape[0]):
-                _xdata = np.asmatrix(xdata[row, :]).T
-                _ydata = np.asmatrix(ydata[row, :]).T
+            total_loss = 0
+            for row in range(xdata.shape[0]):
+                _xdata = xdata[row, :].reshape(-1, 1)
+                _ydata = ydata[row, :].reshape(-1, 1)
 
-                # forward propagation
+                # Forward propagation
                 for layer in self.layers:
                     _xdata = layer.forward_propagation(_xdata)
 
-                loss, gradient = self.cal_loss(_ydata, _xdata)
-                all_loss = all_loss + loss
+                # Calculate loss and gradient
+                loss = self.loss_function.calculate(_ydata, _xdata)
+                total_loss += loss
+                gradient = self.loss_function.gradient(_ydata, _xdata)
 
-                # back propagation: the input_layer does not upgrade
-                for layer in self.layers[:0:-1]:
+                # Back propagation
+                for layer in reversed(self.layers):
                     gradient = layer.back_propagation(gradient)
 
-            mse = all_loss / x_shape[0]
+            mse = total_loss / xdata.shape[0]
             self.train_mse.append(mse)
-
             self.plot_loss()
 
-            if mse < self.accuracy:
-                print("----达到精度----")
+            if mse < accuracy:
+                print("Reached target accuracy.")
                 return mse
         return None
 
-    def cal_loss(self, ydata, ydata_):
-        self.loss = np.sum(np.power((ydata - ydata_), 2))
-        self.loss_gradient = 2 * (ydata_ - ydata)
-        # vector (shape is the same as _ydata.shape)
-        return self.loss, self.loss_gradient
-
     def plot_loss(self):
-        if self.ax_loss.lines:
-            self.ax_loss.lines.remove(self.ax_loss.lines[0])
+        """Plot the training loss."""
+        self.ax_loss.clear()
         self.ax_loss.plot(self.train_mse, "r-")
-        plt.ion()
-        plt.xlabel("step")
-        plt.ylabel("loss")
-        plt.show()
+        self.ax_loss.set_xlabel("Epochs")
+        self.ax_loss.set_ylabel("Mean Squared Error")
         plt.pause(0.1)
 
 
 def example():
     rng = np.random.default_rng()
     x = rng.normal(size=(10, 10))
-    y = np.asarray(
-        [
-            [0.8, 0.4],
-            [0.4, 0.3],
-            [0.34, 0.45],
-            [0.67, 0.32],
-            [0.88, 0.67],
-            [0.78, 0.77],
-            [0.55, 0.66],
-            [0.55, 0.43],
-            [0.54, 0.1],
-            [0.1, 0.5],
-        ]
-    )
+    y = np.random.rand(10, 2)  # Random target values
+
     model = BPNN()
-    for i in (10, 20, 30, 2):
-        model.add_layer(DenseLayer(i))
+    model.add_layer(DenseLayer(10))
+    model.add_layer(DenseLayer(20))
+    model.add_layer(DenseLayer(30))
+    model.add_layer(DenseLayer(2))
     model.build()
     model.summary()
     model.train(xdata=x, ydata=y, train_round=100, accuracy=0.01)
 
 
 if __name__ == "__main__":
+    plt.ion()  # Interactive mode for live plotting
     example()
+    plt.show()  # Keep the plot open after training
